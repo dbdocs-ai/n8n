@@ -12,10 +12,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Node.js
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install n8n
         run: |
@@ -36,47 +36,53 @@ jobs:
           N8N_EDITOR_BASE_URL: http://localhost:5678
         run: |
           nohup n8n > n8n.log 2>&1 &
+          echo "Waiting for n8n to start..."
           sleep 20
 
       - name: Start Cloudflare Tunnel
         run: |
           nohup ./cloudflared tunnel --url http://localhost:5678 > tunnel.log 2>&1 &
+          echo "Waiting for tunnel..."
           sleep 10
 
       - name: Get Public URL
+        shell: bash
         run: |
-          echo "Waiting for Cloudflare Tunnel..."
-          for i in {1..30}; do
+          echo "Searching for Cloudflare Tunnel URL..."
+
+          for i in {1..60}; do
             URL=$(grep -o 'https://[-a-zA-Z0-9]*\.trycloudflare\.com' tunnel.log | head -n1)
+
             if [ -n "$URL" ]; then
               echo ""
-              echo "========================================"
-              echo "🚀 n8n Live URL:"
+              echo "======================================="
+              echo "🚀 n8n Public URL"
               echo "$URL"
-              echo "========================================"
-              break
+              echo "======================================="
+              exit 0
             fi
+
             sleep 2
           done
 
-          if [ -z "$URL" ]; then
-            echo "Tunnel URL not found."
-            cat tunnel.log
-            exit 1
-          fi
+          echo "❌ Tunnel URL not found."
+          echo ""
+          cat tunnel.log
+          exit 1
 
-      - name: Server Status Monitor
+      - name: Monitor Server (6 Hours)
+        shell: bash
         run: |
           echo "Monitoring server for 6 hours..."
 
           END=$((SECONDS+21600))
 
           while [ $SECONDS -lt $END ]; do
-            clear
 
-            echo "========================================"
+            echo ""
+            echo "======================================="
             echo "🖥 SERVER STATUS"
-            echo "========================================"
+            echo "======================================="
             echo "Time: $(date)"
             echo ""
 
@@ -88,7 +94,7 @@ jobs:
             uptime -p
             echo ""
 
-            echo "CPU Load:"
+            echo "CPU:"
             uptime
             echo ""
 
@@ -101,11 +107,36 @@ jobs:
             echo ""
 
             echo "Network:"
-            ip -br addr
+            ip -br addr || ip addr
+            echo ""
+
+            echo "n8n Process:"
+            pgrep -af n8n || echo "Not running"
+            echo ""
+
+            echo "Cloudflared Process:"
+            pgrep -af cloudflared || echo "Not running"
+            echo ""
+
+            echo "Last 5 lines of n8n log:"
+            tail -n 5 n8n.log || true
+            echo ""
+
+            echo "Last 5 lines of tunnel log:"
+            tail -n 5 tunnel.log || true
             echo ""
 
             echo "Next update in 60 seconds..."
-            echo "========================================"
+            echo "======================================="
 
             sleep 60
           done
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-logs
+          path: |
+            n8n.log
+            tunnel.log
